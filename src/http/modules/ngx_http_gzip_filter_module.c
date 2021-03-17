@@ -13,7 +13,7 @@
 
 
 typedef struct {
-    ngx_flag_t           enable;
+    // ngx_flag_t           enable;
     ngx_flag_t           no_buffer;
 
     ngx_hash_t           types;
@@ -66,8 +66,6 @@ typedef struct {
 } ngx_http_gzip_ctx_t;
 
 
-static void ngx_http_gzip_filter_memory(ngx_http_request_t *r,
-    ngx_http_gzip_ctx_t *ctx);
 static ngx_int_t ngx_http_gzip_filter_buffer(ngx_http_gzip_ctx_t *ctx,
     ngx_chain_t *in);
 static ngx_int_t ngx_http_gzip_filter_deflate_start(ngx_http_request_t *r,
@@ -109,13 +107,13 @@ static ngx_conf_post_handler_pt  ngx_http_gzip_hash_p = ngx_http_gzip_hash;
 
 static ngx_command_t  ngx_http_gzip_filter_commands[] = {
 
-    { ngx_string("gzip"),
-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
-                        |NGX_CONF_FLAG,
-      ngx_conf_set_flag_slot,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_gzip_conf_t, enable),
-      NULL },
+    // { ngx_string("gzip"),
+    //   NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
+    //                     |NGX_CONF_FLAG,
+    //   ngx_conf_set_flag_slot,
+    //   NGX_HTTP_LOC_CONF_OFFSET,
+    //   offsetof(ngx_http_gzip_conf_t, enable),
+    //   NULL },
 
     { ngx_string("gzip_buffers"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE2,
@@ -219,13 +217,14 @@ static ngx_uint_t  ngx_http_gzip_assume_intel;
 static ngx_int_t
 ngx_http_gzip_header_filter(ngx_http_request_t *r)
 {
-    ngx_table_elt_t       *h;
-    ngx_http_gzip_ctx_t   *ctx;
+    // ngx_table_elt_t       *h;
+    // ngx_http_gzip_ctx_t   *ctx;
     ngx_http_gzip_conf_t  *conf;
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_gzip_filter_module);
 
-    if (!conf->enable
+    // NOTE: disable gzip, straight-away return
+    if (/* !conf->enable */ 1
         || (r->headers_out.status != NGX_HTTP_OK
             && r->headers_out.status != NGX_HTTP_FORBIDDEN
             && r->headers_out.status != NGX_HTTP_NOT_FOUND)
@@ -238,59 +237,6 @@ ngx_http_gzip_header_filter(ngx_http_request_t *r)
     {
         return ngx_http_next_header_filter(r);
     }
-
-    r->gzip_vary = 1;
-
-#if (NGX_HTTP_DEGRADATION)
-    {
-    ngx_http_core_loc_conf_t  *clcf;
-
-    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-
-    if (clcf->gzip_disable_degradation && ngx_http_degraded(r)) {
-        return ngx_http_next_header_filter(r);
-    }
-    }
-#endif
-
-    if (!r->gzip_tested) {
-        if (ngx_http_gzip_ok(r) != NGX_OK) {
-            return ngx_http_next_header_filter(r);
-        }
-
-    } else if (!r->gzip_ok) {
-        return ngx_http_next_header_filter(r);
-    }
-
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_gzip_ctx_t));
-    if (ctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    ngx_http_set_ctx(r, ctx, ngx_http_gzip_filter_module);
-
-    ctx->request = r;
-    ctx->buffering = (conf->postpone_gzipping != 0);
-
-    ngx_http_gzip_filter_memory(r, ctx);
-
-    h = ngx_list_push(&r->headers_out.headers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    h->hash = 1;
-    ngx_str_set(&h->key, "Content-Encoding");
-    ngx_str_set(&h->value, "gzip");
-    r->headers_out.content_encoding = h;
-
-    r->main_filter_need_in_memory = 1;
-
-    ngx_http_clear_content_length(r);
-    ngx_http_clear_accept_ranges(r);
-    ngx_http_weak_etag(r);
-
-    return ngx_http_next_header_filter(r);
 }
 
 
@@ -461,71 +407,6 @@ failed:
 
     return NGX_ERROR;
 }
-
-
-static void
-ngx_http_gzip_filter_memory(ngx_http_request_t *r, ngx_http_gzip_ctx_t *ctx)
-{
-    int                    wbits, memlevel;
-    ngx_http_gzip_conf_t  *conf;
-
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_gzip_filter_module);
-
-    wbits = conf->wbits;
-    memlevel = conf->memlevel;
-
-    if (r->headers_out.content_length_n > 0) {
-
-        /* the actual zlib window size is smaller by 262 bytes */
-
-        while (r->headers_out.content_length_n < ((1 << (wbits - 1)) - 262)) {
-            wbits--;
-            memlevel--;
-        }
-
-        if (memlevel < 1) {
-            memlevel = 1;
-        }
-    }
-
-    ctx->wbits = wbits;
-    ctx->memlevel = memlevel;
-
-    /*
-     * We preallocate a memory for zlib in one buffer (200K-400K), this
-     * decreases a number of malloc() and free() calls and also probably
-     * decreases a number of syscalls (sbrk()/mmap() and so on).
-     * Besides we free the memory as soon as a gzipping will complete
-     * and do not wait while a whole response will be sent to a client.
-     *
-     * 8K is for zlib deflate_state, it takes
-     *  *) 5816 bytes on i386 and sparc64 (32-bit mode)
-     *  *) 5920 bytes on amd64 and sparc64
-     */
-
-    if (!ngx_http_gzip_assume_intel) {
-        ctx->allocated = 8192 + (1 << (wbits + 2)) + (1 << (memlevel + 9));
-
-    } else {
-        /*
-         * A zlib variant from Intel, https://github.com/jtkukunas/zlib.
-         * It can force window bits to 13 for fast compression level,
-         * on processors with SSE 4.2 it uses 64K hash instead of scaling
-         * it from the specified memory level, and also introduces
-         * 16-byte padding in one out of the two window-sized buffers.
-         */
-
-        if (conf->level == 1) {
-            wbits = ngx_max(wbits, 13);
-        }
-
-        ctx->allocated = 8192 + 16 + (1 << (wbits + 2))
-                         + (1 << (ngx_max(memlevel, 8) + 8))
-                         + (1 << (memlevel + 8));
-        ctx->intel = 1;
-    }
-}
-
 
 static ngx_int_t
 ngx_http_gzip_filter_buffer(ngx_http_gzip_ctx_t *ctx, ngx_chain_t *in)
@@ -1064,7 +945,7 @@ ngx_http_gzip_create_conf(ngx_conf_t *cf)
      *     conf->types_keys = NULL;
      */
 
-    conf->enable = NGX_CONF_UNSET;
+    // conf->enable = NGX_CONF_UNSET;
     conf->no_buffer = NGX_CONF_UNSET;
 
     conf->postpone_gzipping = NGX_CONF_UNSET_SIZE;
@@ -1083,7 +964,7 @@ ngx_http_gzip_merge_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_gzip_conf_t *prev = parent;
     ngx_http_gzip_conf_t *conf = child;
 
-    ngx_conf_merge_value(conf->enable, prev->enable, 0);
+    // ngx_conf_merge_value(conf->enable, prev->enable, 0);
     ngx_conf_merge_value(conf->no_buffer, prev->no_buffer, 0);
 
     ngx_conf_merge_bufs_value(conf->bufs, prev->bufs,
