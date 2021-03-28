@@ -448,18 +448,23 @@ ngx_conf_handler(ngx_conf_t *cf, ngx_int_t last)
 
             if (cmd->type & NGX_DIRECT_CONF) {
                 conf = ((void **) cf->ctx)[cf->cycle->modules[i]->index];
+                // printf("%d: conf=%p\n", __LINE__, conf);
 
             } else if (cmd->type & NGX_MAIN_CONF) {
                 conf = &(((void **) cf->ctx)[cf->cycle->modules[i]->index]);
+                // printf("%d: conf=%p\n", __LINE__, conf);
 
             } else if (cf->ctx) {
                 confp = *(void **) ((char *) cf->ctx + cmd->conf);
 
                 if (confp) {
                     conf = confp[cf->cycle->modules[i]->ctx_index];
+                    // printf("%d: cf->cycle->modules[i]->ctx_index=%lu\n", __LINE__, cf->cycle->modules[i]->ctx_index);
+                    // printf("%d: confp=%p, conf=%p\n", __LINE__, confp, conf);
                 }
             }
-
+            // printf("%d:AAA cf->ctx=%p, cmd->conf=%lu", __LINE__, cf->ctx, cmd->conf);
+            printf("%d: cmd->name=%s\n", __LINE__, cmd->name.data);
             rv = cmd->set(cf, cmd, conf);
 
             if (rv == NGX_CONF_OK) {
@@ -1032,6 +1037,7 @@ ngx_conf_set_flag_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_conf_post_t  *post;
 
     fp = (ngx_flag_t *) (p + cmd->offset);
+    printf("ngx_conf_set_flag_slot: ptr=%p\n", p + cmd->offset);
 
     if (*fp != NGX_CONF_UNSET) {
         return "is duplicate";
@@ -1205,6 +1211,7 @@ ngx_conf_set_size_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
 
     sp = (size_t *) (p + cmd->offset);
+    printf("ngx_conf_set_size_slot: ptr=%p\n", sp);
     if (*sp != NGX_CONF_UNSET_SIZE) {
         return "is duplicate";
     }
